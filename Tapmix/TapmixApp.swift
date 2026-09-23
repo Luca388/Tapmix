@@ -8,8 +8,10 @@ struct TapmixApp: App {
 
     var body: some Scene {
         // 1) 메뉴바 팝오버
-        MenuBarExtra("Tapmix", systemImage: "speaker.wave.2.fill") {
+        MenuBarExtra {
             MainPopoverView(monitor: monitor, output: output, presentation: presentation, mode: .popover)
+        } label: {
+            Image(systemName: output.menuBarSymbolName)
         }
         .menuBarExtraStyle(.window)
 

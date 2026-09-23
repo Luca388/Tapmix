@@ -45,6 +45,15 @@ struct MainPopoverView: View {
                 .frame(height: min(CGFloat(monitor.apps.count) * AppRowView.height + 6, 440))
             }
 
+            if let message = presentation.launchAtLoginError {
+                Divider()
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
+
             if let message = monitor.errorMessage {
                 Divider()
                 Text(message)
@@ -149,6 +158,12 @@ struct MainPopoverView: View {
                     set: { presentation.openWindowAtLaunch = $0 }
                 ))
                 Divider()
+                Toggle("로그인 시 실행", isOn: Binding(
+                    get: { presentation.launchAtLogin },
+                    set: { presentation.setLaunchAtLogin($0) }
+                ))
+                Divider()
+                Button("macOS 사운드 설정…") { AppPresentation.openSoundSettings() }
                 Button("권한 설정 열기") { AudioCapturePermission.openSystemSettings() }
             } label: {
                 Image(systemName: "gearshape")

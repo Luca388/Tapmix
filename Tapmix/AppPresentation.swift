@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import ServiceManagement
 import SwiftUI
 
 /// 앱이 어떻게 보이는지 (메뉴바만 / 창 / Dock 아이콘) 를 관리한다.
@@ -25,6 +26,29 @@ final class AppPresentation {
     }
 
     private(set) var isWindowOpen = false
+
+    /// 로그인 시 자동 실행. 시스템 사운드 메뉴를 대체하려면 켜 두는 게 좋다.
+    /// 상태는 시스템(SMAppService)이 들고 있으므로 UserDefaults 에 저장하지 않는다.
+    private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
+    private(set) var launchAtLoginError: String?
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLoginError = nil
+        } catch {
+            launchAtLoginError = "로그인 항목 설정 실패: \(error.localizedDescription)"
+        }
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    static func openSoundSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension")!)
+    }
 
     init() {
         let defaults = UserDefaults.standard

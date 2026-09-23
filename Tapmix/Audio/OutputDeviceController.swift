@@ -9,6 +9,36 @@ final class OutputDeviceController {
     struct Device: Identifiable, Hashable {
         let id: AudioObjectID
         let name: String
+        let transportType: UInt32
+
+        var isAirPlay: Bool { transportType == kAudioDeviceTransportTypeAirPlay }
+        var isBluetooth: Bool {
+            transportType == kAudioDeviceTransportTypeBluetooth || transportType == kAudioDeviceTransportTypeBluetoothLE
+        }
+
+        var symbolName: String {
+            if isAirPlay { return "airplayaudio" }
+            if isBluetooth { return "headphones" }
+            switch transportType {
+            case kAudioDeviceTransportTypeBuiltIn: return "laptopcomputer"
+            case kAudioDeviceTransportTypeUSB: return "cable.connector"
+            case kAudioDeviceTransportTypeHDMI, kAudioDeviceTransportTypeDisplayPort: return "display"
+            default: return "hifispeaker"
+            }
+        }
+    }
+
+    var selectedDevice: Device? { devices.first { $0.id == selectedID } }
+
+    /// 메뉴바 아이콘. 시스템 사운드 메뉴처럼 볼륨에 따라 파동 개수가 바뀐다.
+    var menuBarSymbolName: String {
+        if isMuted || (hasVolumeControl && volume <= 0.001) { return "speaker.slash.fill" }
+        guard hasVolumeControl else { return "speaker.wave.2.fill" }
+        switch volume {
+        case ..<0.34: return "speaker.wave.1.fill"
+        case ..<0.67: return "speaker.wave.2.fill"
+        default: return "speaker.wave.3.fill"
+        }
     }
 
     private(set) var devices: [Device] = []
@@ -50,7 +80,11 @@ final class OutputDeviceController {
                   // 우리가 만든 private aggregate ("Tapmix Tap") 는 만든 프로세스에겐 보인다 — 숨긴다
                   !Self.isOwnAggregate(device)
             else { return nil }
-            return Device(id: device.id, name: (try? device.name) ?? "알 수 없는 장치")
+            return Device(
+                id: device.id,
+                name: (try? device.name) ?? "알 수 없는 장치",
+                transportType: Self.read(UInt32.self, device.id, PropertyAddress(kAudioDevicePropertyTransportType)) ?? 0
+            )
         }
 
         if let current = try? system.defaultOutputDevice, Self.isOwnAggregate(current) {

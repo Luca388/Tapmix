@@ -8,16 +8,21 @@ struct OutputSectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "hifispeaker.fill")
+                Image(systemName: output.selectedDevice?.symbolName ?? "hifispeaker")
                     .foregroundStyle(.secondary)
                     .frame(width: 20)
                 Picker("출력 장치", selection: deviceBinding) {
                     ForEach(output.devices) { device in
-                        Text(device.name).tag(Optional(device.id))
+                        Label(device.name, systemImage: device.symbolName)
+                            .tag(Optional(device.id))
                     }
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
+
+                AirPlayButton()
+                    .frame(width: 22, height: 22)
+                    .help("AirPlay")
             }
 
             HStack(spacing: 8) {
