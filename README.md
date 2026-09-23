@@ -90,4 +90,7 @@ Swift 클래스 인스턴스 생성을 하지 않는다. `self` 도 캡처하지
 
 ## 라이선스
 
-MIT — [LICENSE](LICENSE) 참고.
+Copyright (C) 2026 Luca388
+
+[GNU General Public License v3.0](LICENSE) 으로 배포된다. 이 코드를 수정하거나 포함한
+프로그램을 배포하려면 그 소스도 같은 GPL-3.0 으로 공개해야 한다.
