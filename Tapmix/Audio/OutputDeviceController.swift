@@ -8,6 +8,7 @@ import Observation
 final class OutputDeviceController {
     struct Device: Identifiable, Hashable {
         let id: AudioObjectID
+        let uid: String
         let name: String
         let transportType: UInt32
 
@@ -30,17 +31,6 @@ final class OutputDeviceController {
 
     var selectedDevice: Device? { devices.first { $0.id == selectedID } }
 
-    /// 메뉴바 아이콘. 시스템 사운드 메뉴처럼 볼륨에 따라 파동 개수가 바뀐다.
-    var menuBarSymbolName: String {
-        if isMuted || (hasVolumeControl && volume <= 0.001) { return "speaker.slash.fill" }
-        guard hasVolumeControl else { return "speaker.wave.2.fill" }
-        switch volume {
-        case ..<0.34: return "speaker.wave.1.fill"
-        case ..<0.67: return "speaker.wave.2.fill"
-        default: return "speaker.wave.3.fill"
-        }
-    }
-
     private(set) var devices: [Device] = []
     private(set) var selectedID: AudioObjectID?
     /// 0...1. 장치가 볼륨 컨트롤을 지원하지 않으면 hasVolumeControl == false
@@ -52,6 +42,8 @@ final class OutputDeviceController {
     private let system = AudioHardwareSystem.shared
     private var systemListeners: [PropertyListener] = []
     private var deviceListeners: [PropertyListener] = []
+    /// 연결 중인 블루투스 기기. HAL 에 나타나면 기본 출력으로 고른다.
+    private var pendingBluetooth: (device: BluetoothAudioDevice, onAppear: () -> Void)?
 
     // 'vmvc' — 채널별 볼륨만 있는 장치도 HAL 이 하나의 메인 볼륨처럼 보여준다
     private let volumeSelector = kAudioHardwareServiceDeviceProperty_VirtualMainVolume
@@ -82,6 +74,7 @@ final class OutputDeviceController {
             else { return nil }
             return Device(
                 id: device.id,
+                uid: (try? device.uid) ?? "",
                 name: (try? device.name) ?? "알 수 없는 장치",
                 transportType: Self.read(UInt32.self, device.id, PropertyAddress(kAudioDevicePropertyTransportType)) ?? 0
             )
@@ -94,8 +87,25 @@ final class OutputDeviceController {
             }
         }
         selectedID = try? system.defaultOutputDevice?.id
+
+        if let pending = pendingBluetooth,
+           let match = devices.first(where: { pending.device.matches(halUID: $0.uid, halName: $0.name) }) {
+            pendingBluetooth = nil
+            select(deviceID: match.id)
+            pending.onAppear()
+        }
+
         watchSelectedDevice()
         refreshVolume()
+    }
+
+    /// 블루투스 기기가 연결되어 HAL 장치로 나타나면 기본 출력으로 바꾼다
+    func selectWhenConnected(_ device: BluetoothAudioDevice, onAppear: @escaping () -> Void) {
+        pendingBluetooth = (device, onAppear)
+    }
+
+    func cancelPendingBluetooth() {
+        pendingBluetooth = nil
     }
 
     func select(deviceID: AudioObjectID) {

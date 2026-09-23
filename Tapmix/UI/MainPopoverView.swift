@@ -5,6 +5,7 @@ struct MainPopoverView: View {
 
     let monitor: AudioProcessMonitor
     let output: OutputDeviceController
+    let bluetooth: BluetoothAudioMonitor
     let presentation: AppPresentation
     let mode: Mode
 
@@ -13,12 +14,11 @@ struct MainPopoverView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if mode == .popover {
-                popoverHeader
-                Divider()
+            OutputSectionView(output: output, bluetooth: bluetooth) {
+                if mode == .popover {
+                    detachButton
+                }
             }
-
-            OutputSectionView(output: output)
 
             Divider()
 
@@ -125,24 +125,17 @@ struct MainPopoverView: View {
         .padding(.bottom, 6)
     }
 
-    /// 팝오버 상단: 제목 + "창으로 열기" 버튼 (SoundSource 의 detach 와 같은 역할)
-    private var popoverHeader: some View {
-        HStack {
-            Text("Tapmix")
-                .font(.headline)
-            Spacer()
-            Button {
-                openWindow(id: AppPresentation.windowID)
-                dismiss()
-            } label: {
-                Image(systemName: "macwindow.on.rectangle")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("창으로 열기")
+    /// "창으로 열기" 버튼 (SoundSource 의 detach 와 같은 역할)
+    private var detachButton: some View {
+        Button {
+            openWindow(id: AppPresentation.windowID)
+            dismiss()
+        } label: {
+            Image(systemName: "macwindow.on.rectangle")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help("창으로 열기")
     }
 
     private var footer: some View {
@@ -166,7 +159,6 @@ struct MainPopoverView: View {
                     set: { presentation.setLaunchAtLogin($0) }
                 ))
                 Divider()
-                Button("macOS 사운드 설정…") { AppPresentation.openSoundSettings() }
                 Button("권한 설정 열기") { AudioCapturePermission.openSystemSettings() }
             } label: {
                 Image(systemName: "gearshape")

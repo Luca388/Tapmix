@@ -22,6 +22,8 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>페어링된 헤드폰과 AirPods 를 목록에서 바로 연결하기 위해 블루투스를 사용합니다.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>앱별 음량 표시와 조절을 위해 각 앱의 오디오 출력을 읽습니다.</string>
 	<key>NSPrincipalClass</key>
