@@ -1,0 +1,35 @@
+# Xcode
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+DerivedData/
+build/
+*.xcresult
+*.xcarchive
+*.dSYM
+*.dSYM.zip
+
+# Code signing / distribution — never commit
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+*.p8
+AuthKey_*.p8
+ExportOptions.plist
+
+# Local secrets & config
+.env
+.env.*
+*.local.xcconfig
+Secrets.xcconfig
+Local.xcconfig
+
+# Release artifacts
+*.dmg
+*.zip
+*.pkg
+
+# macOS
+.DS_Store
