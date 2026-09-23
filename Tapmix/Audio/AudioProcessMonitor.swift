@@ -19,6 +19,8 @@ struct AudioApp: Identifiable {
 
     var settingsKey: String { bundleID ?? name }
     var effectiveGain: Float { isMuted ? 0 : volume }
+    /// 원음 그대로(100%, 음소거 아님)면 탭이 필요 없다. 탭이 없으면 macOS 녹음 표시도 안 뜬다.
+    var needsTap: Bool { isMuted || volume < 1 }
 }
 
 private struct AppAudioSettings: Codable {
@@ -27,7 +29,11 @@ private struct AppAudioSettings: Codable {
 }
 
 /// Core Audio 에 등록된 프로세스를 앱 단위로 묶어 추적하고,
-/// 권한이 있으면 각 앱에 탭을 걸어 볼륨/음소거/레벨을 처리한다.
+/// 볼륨을 바꾸거나 음소거한 앱에만 탭을 걸어 볼륨/음소거/레벨을 처리한다.
+///
+/// 모든 앱에 탭을 상시로 걸면 macOS 의 "시스템 오디오 녹음" 표시가 항상 켜지고
+/// 오디오 하드웨어가 잠들지 못해 배터리도 먹는다. 그래서 필요한 앱에만 건다.
+/// 볼륨을 바꾼 앱은 재생 중이 아니어도 탭을 유지한다 — 재생 시작 순간 원래 볼륨으로 튀는 걸 막기 위해.
 @MainActor
 @Observable
 final class AudioProcessMonitor {
@@ -43,6 +49,8 @@ final class AudioProcessMonitor {
     private var processListeners: [AudioObjectID: PropertyListener] = [:]
     private var meterTimer: Timer?
     private var settings: [String: AppAudioSettings] = [:]
+    private var isRequestingPermission = false
+    private var pendingTapCleanup: DispatchWorkItem?
 
     private static let settingsKey = "appAudioSettings"
 
@@ -65,9 +73,7 @@ final class AudioProcessMonitor {
             MainActor.assumeIsolated { self?.updateLevels() }
         }
 
-        if permission.status == .unknown {
-            permission.request { [weak self] in self?.refresh() }
-        }
+        // 권한은 실행 시점이 아니라 처음으로 탭이 필요해질 때 (볼륨을 처음 바꿀 때) 요청한다
         refresh()
     }
 
@@ -75,8 +81,13 @@ final class AudioProcessMonitor {
 
     func setVolume(_ value: Float, for pid: pid_t) {
         guard let index = apps.firstIndex(where: { $0.id == pid }) else { return }
-        apps[index].volume = min(max(value, 0), 1)
+        // 슬라이더를 끝까지 올렸을 때 정확히 1.0 이 안 나올 수 있어 스냅 — 그래야 탭이 해제된다
+        apps[index].volume = value >= 0.995 ? 1 : max(value, 0)
         applyGain(apps[index])
+    }
+
+    func isTapped(_ pid: pid_t) -> Bool {
+        taps[pid] != nil
     }
 
     func toggleMute(for pid: pid_t) {
@@ -86,9 +97,48 @@ final class AudioProcessMonitor {
     }
 
     private func applyGain(_ app: AudioApp) {
-        taps[app.id]?.control.gain.store(app.effectiveGain, ordering: .relaxed)
-        settings[app.settingsKey] = AppAudioSettings(volume: app.volume, isMuted: app.isMuted)
+        if let tap = taps[app.id] {
+            tap.control.gain.store(app.effectiveGain, ordering: .relaxed)
+        }
+
+        if app.needsTap {
+            pendingTapCleanup?.cancel()
+            pendingTapCleanup = nil
+            if taps[app.id] == nil { syncTaps() }
+        } else if taps[app.id] != nil {
+            // 100% 로 돌아왔으면 탭을 뗀다. 슬라이더를 100% 근처에서 흔들 때 탭을 반복 생성/해제하지
+            // 않도록 잠깐 기다린다. 그동안은 게인 1.0 으로 통과시키므로 소리는 원음 그대로다.
+            scheduleTapCleanup()
+        }
+
+        if app.needsTap {
+            settings[app.settingsKey] = AppAudioSettings(volume: app.volume, isMuted: app.isMuted)
+        } else {
+            settings[app.settingsKey] = nil
+        }
         saveSettings()
+    }
+
+    private func scheduleTapCleanup() {
+        pendingTapCleanup?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.pendingTapCleanup = nil
+                self?.syncTaps()
+            }
+        }
+        pendingTapCleanup = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: work)
+    }
+
+    /// 사용자가 배너에서 직접 권한을 요청할 때
+    func requestPermission() {
+        guard !isRequestingPermission else { return }
+        isRequestingPermission = true
+        permission.request { [weak self] in
+            self?.isRequestingPermission = false
+            self?.syncTaps()
+        }
     }
 
     // MARK: - Process list
@@ -176,22 +226,33 @@ final class AudioProcessMonitor {
 
     // MARK: - Taps
 
-    /// 목록에 있는 모든 앱에 탭을 유지한다 (재생 시작 순간부터 바로 설정된 볼륨이 적용되도록).
+    /// 볼륨/음소거를 바꾼 앱에만 탭을 유지하고 나머지는 뗀다.
     /// 프로세스 구성이 바뀐 앱은 탭을 다시 만든다.
     private func syncTaps() {
-        guard permission.status == .granted else {
+        let needed = apps.filter(\.needsTap)
+        let neededPIDs = Set(needed.map(\.id))
+
+        for pid in taps.keys where !neededPIDs.contains(pid) {
+            removeTap(for: pid)
+        }
+        guard !needed.isEmpty else {
+            errorMessage = nil
+            return
+        }
+
+        switch permission.status {
+        case .granted:
+            break
+        case .unknown:
+            requestPermission()
+            return
+        case .denied:
             removeAllTaps()
             return
         }
 
-        let livePIDs = Set(apps.map(\.id))
-        for pid in taps.keys where !livePIDs.contains(pid) {
-            taps[pid]?.invalidate()
-            taps[pid] = nil
-        }
-
         var failure: String?
-        for app in apps {
+        for app in needed {
             if let existing = taps[app.id], existing.processIDs == app.processIDs { continue }
             taps[app.id]?.invalidate()
             do {
@@ -211,6 +272,12 @@ final class AudioProcessMonitor {
         syncTaps()
     }
 
+    private func removeTap(for pid: pid_t) {
+        taps[pid]?.invalidate()
+        taps[pid] = nil
+        log.notice("tap removed for pid \(pid, privacy: .public)")
+    }
+
     private func removeAllTaps() {
         for tap in taps.values { tap.invalidate() }
         taps = [:]
@@ -219,7 +286,6 @@ final class AudioProcessMonitor {
     private var debugTick = 0
 
     private func updateLevels() {
-        guard !taps.isEmpty else { return }
         #if DEBUG
         debugTick += 1
         if debugTick % 60 == 0 {
@@ -231,7 +297,12 @@ final class AudioProcessMonitor {
             let peak = taps[apps[index].id]?.control.peak.load(ordering: .relaxed) ?? 0
             // 올라갈 땐 즉시, 내려올 땐 천천히 (VU 미터 느낌)
             let decayed = apps[index].level * 0.85
-            apps[index].level = min(1, max(peak, decayed))
+            var next = min(1, max(peak, decayed))
+            if next < 0.0005 { next = 0 }
+            // 값이 같으면 쓰지 않는다 — @Observable 이라 쓰기만 해도 매 프레임 다시 그려진다
+            if next != apps[index].level {
+                apps[index].level = next
+            }
         }
     }
 

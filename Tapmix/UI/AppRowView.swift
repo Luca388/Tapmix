@@ -20,8 +20,8 @@ struct AppRowView: View {
                         .fontWeight(.medium)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    LevelMeterView(level: app.level, isActive: app.isPlaying && !app.isMuted)
-                        .frame(width: 60)
+                    playbackIndicator
+                        .frame(width: 60, alignment: .trailing)
                 }
 
                 HStack(spacing: 8) {
@@ -36,6 +36,19 @@ struct AppRowView: View {
         .padding(.horizontal, 12)
         .frame(height: Self.height)
         .opacity(app.isMuted ? 0.6 : 1)
+    }
+
+    /// 탭이 걸린 앱만 실제 레벨을 알 수 있다. 원음(100%)으로 두어 탭이 없는 앱은 재생 여부만 표시.
+    @ViewBuilder
+    private var playbackIndicator: some View {
+        if monitor.isTapped(app.id) {
+            LevelMeterView(level: app.level, isActive: app.isPlaying && !app.isMuted)
+        } else if app.isPlaying {
+            Image(systemName: "waveform")
+                .font(.caption)
+                .foregroundStyle(.green)
+                .help("재생 중")
+        }
     }
 
     @ViewBuilder

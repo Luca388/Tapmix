@@ -86,13 +86,16 @@ struct MainPopoverView: View {
         case .granted:
             EmptyView()
         case .unknown:
-            banner(
-                icon: "hourglass",
-                text: "시스템 오디오 녹음 권한을 요청하는 중입니다. 프롬프트에서 허용해 주세요.",
-                buttonTitle: "다시 확인"
-            ) {
-                monitor.permission.refresh()
-                monitor.refresh()
+            // 권한은 볼륨을 처음 바꿀 때 요청한다. 그 전에는 배너를 띄울 이유가 없다.
+            if monitor.apps.contains(where: \.needsTap) {
+                banner(
+                    icon: "hourglass",
+                    text: "앱별 볼륨을 적용하려면 시스템 오디오 녹음 권한이 필요합니다. 프롬프트에서 허용해 주세요.",
+                    buttonTitle: "다시 요청"
+                ) {
+                    monitor.permission.refresh()
+                    monitor.requestPermission()
+                }
             }
         case .denied:
             banner(
