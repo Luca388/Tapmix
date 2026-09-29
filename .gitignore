@@ -27,6 +27,7 @@ Secrets.xcconfig
 Local.xcconfig
 
 # Release artifacts
+dist/
 *.dmg
 *.zip
 *.pkg

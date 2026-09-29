@@ -49,6 +49,30 @@ CLI 빌드:
 xcodebuild -project Tapmix.xcodeproj -target Tapmix -configuration Debug build
 ```
 
+## DMG 배포
+
+```bash
+scripts/make-dmg.sh
+```
+
+Release 로 universal(arm64 + x86_64) 빌드한 뒤 `dist/Tapmix-<버전>.dmg` 를 만든다.
+DMG 를 열고 Tapmix 를 Applications 폴더로 끌어다 놓으면 설치된다. 버전은 Xcode 의
+`MARKETING_VERSION` 을 따른다.
+
+기본은 ad-hoc 서명이라 받은 사람 Mac 에서 Gatekeeper 가 막는다. 처음 한 번은
+Finder 에서 우클릭 › 열기, 또는 시스템 설정 › 개인정보 보호 및 보안 › "그래도 열기" 를 누르거나:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Tapmix.app
+```
+
+Apple Developer ID 가 있으면 서명·공증까지 한다
+(`NOTARY_PROFILE` 은 `xcrun notarytool store-credentials` 로 미리 저장):
+
+```bash
+SIGN_IDENTITY="Developer ID Application: Name (TEAMID)" NOTARY_PROFILE=tapmix-notary scripts/make-dmg.sh
+```
+
 ## 구조
 
 ```
