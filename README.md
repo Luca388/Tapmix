@@ -58,29 +58,41 @@ CLI 빌드:
 xcodebuild -project Tapmix.xcodeproj -target Tapmix -configuration Debug build
 ```
 
-## DMG 배포
+## 배포 / 업데이트
 
-```bash
-scripts/make-dmg.sh
-```
+앱은 [Sparkle](https://sparkle-project.org) 로 스스로 업데이트한다. 하루 한 번 자동으로 확인하고,
+톱니바퀴 › 업데이트 확인… 으로 바로 확인할 수도 있다.
 
-Release 로 universal(arm64 + x86_64) 빌드한 뒤 `dist/Tapmix-<버전>.dmg` 를 만든다.
-DMG 를 열고 Tapmix 를 Applications 폴더로 끌어다 놓으면 설치된다. 버전은 Xcode 의
-`MARKETING_VERSION` 을 따른다.
+- 피드: `https://github.com/Luca388/Tapmix/releases/latest/download/appcast.xml` (Info.plist `SUFeedURL`)
+- 다운로드 링크는 항상 [releases/latest/download/Tapmix.dmg](https://github.com/Luca388/Tapmix/releases/latest/download/Tapmix.dmg).
+  DMG 이름에 버전을 넣지 않는다.
+- 업데이트 파일은 EdDSA 로 서명한다. 공개 키는 Info.plist `SUPublicEDKey`, 개인 키는 릴리스하는 Mac 의
+  로그인 키체인에 있다. **개인 키를 잃으면 기존 사용자에게 업데이트를 보낼 수 없으니 백업해 둔다:**
 
-기본은 ad-hoc 서명이라 받은 사람 Mac 에서 Gatekeeper 가 막는다. 처음 한 번은
-Finder 에서 우클릭 › 열기, 또는 시스템 설정 › 개인정보 보호 및 보안 › "그래도 열기" 를 누르거나:
+  ```bash
+  build/release/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys -x sparkle-private-key.txt
+  ```
 
-```bash
-xattr -dr com.apple.quarantine /Applications/Tapmix.app
-```
+새 버전 릴리스:
 
-Apple Developer ID 가 있으면 서명·공증까지 한다
-(`NOTARY_PROFILE` 은 `xcrun notarytool store-credentials` 로 미리 저장):
+1. Xcode 에서 `MARKETING_VERSION` (예: 0.4) 과 `CURRENT_PROJECT_VERSION` (빌드 번호, 매번 +1) 을 올린다.
+   Sparkle 은 빌드 번호로 새 버전인지 판단한다.
+2. 커밋하고 push.
+3. 릴리스 노트를 HTML 조각으로 써서 (업데이트 창에 그대로 보인다):
 
-```bash
-SIGN_IDENTITY="Developer ID Application: Name (TEAMID)" NOTARY_PROFILE=tapmix-notary scripts/make-dmg.sh
-```
+   ```bash
+   scripts/release.sh notes.html
+   ```
+
+   Release 빌드 → `dist/Tapmix.dmg` → Sparkle 서명 → `dist/appcast.xml` → GitHub Release (`v<버전>`, Latest)
+   까지 한다. Latest 로 올라가는 순간 기존 사용자에게 업데이트가 뜬다.
+
+DMG 만 만들려면 `scripts/make-dmg.sh`. Developer ID 가 있으면 `SIGN_IDENTITY`, `NOTARY_PROFILE`
+환경변수로 서명·공증까지 한다 (스크립트 주석 참고).
+
+ad-hoc 서명이라 처음 설치할 때 Gatekeeper 가 막는다. Finder 에서 우클릭 › 열기, 또는
+`xattr -dr com.apple.quarantine /Applications/Tapmix.app`. 또 업데이트할 때마다 서명이 바뀌어서
+"시스템 오디오 녹음" 권한을 다시 물을 수 있다 — Developer ID 로 서명하면 사라진다.
 
 ## 구조
 
@@ -88,6 +100,7 @@ SIGN_IDENTITY="Developer ID Application: Name (TEAMID)" NOTARY_PROFILE=tapmix-no
 Tapmix/
   TapmixApp.swift          MenuBarExtra + Window 씬
   AppPresentation.swift          창/Dock 표시 설정, activation policy 전환
+  AppUpdater.swift               Sparkle 업데이트 (확인/자동 확인)
   Audio/
     AudioProcessMonitor.swift    프로세스를 앱 단위로 그룹핑, 탭 생명주기, 볼륨/음소거, 설정 저장
     ProcessTap.swift             탭(.muted) + aggregate device + IOProc: gain 곱해서 재생, 피크 측정
@@ -104,7 +117,8 @@ Tapmix/
 Config/
   Info.plist                     LSUIElement, NSAudioCaptureUsageDescription
 scripts/
-  make-dmg.sh                    Release 빌드 → DMG
+  make-dmg.sh                    Release 빌드 → dist/Tapmix.dmg
+  release.sh                     DMG + Sparkle 서명 + appcast → GitHub Release
   make-icon.swift                앱 아이콘 PNG 생성 (믹서 페이더)
 ```
 
@@ -119,6 +133,7 @@ scripts/
    클릭음 방지). 볼륨/음소거는 `TapControl.gain` 하나로 처리. 피크는 `Atomic<Float>` 로
    메인 스레드에 전달해 30Hz 로 미터를 그린다.
 4. 앱별 설정은 bundle ID 키로 UserDefaults 에 저장되어 재시작 후에도 유지된다.
+   볼륨/음소거를 조절한 앱은 최근 조절한 순서대로 목록 맨 위에 쌓인다 (슬라이더는 손을 뗄 때 이동).
 5. 기본 출력 장치가 바뀌면 aggregate 가 옛 장치에 묶여 있으므로 모든 탭을 다시 만든다.
 
 탭은 **볼륨을 100% 아래로 내렸거나 음소거한 앱에만** 건다. 원음 그대로인 앱에는 탭이 없어서

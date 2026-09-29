@@ -7,6 +7,7 @@ struct MainPopoverView: View {
     let output: OutputDeviceController
     let bluetooth: BluetoothAudioMonitor
     let presentation: AppPresentation
+    let updater: AppUpdater
     let mode: Mode
 
     @Environment(\.openWindow) private var openWindow
@@ -44,6 +45,7 @@ struct MainPopoverView: View {
                     .padding(.bottom, 6)
                 }
                 .frame(height: min(CGFloat(monitor.apps.count) * AppRowView.height + 6, 440))
+                .animation(.snappy(duration: 0.25), value: monitor.apps.map(\.id))
             }
 
             if let message = presentation.launchAtLoginError {
@@ -176,6 +178,13 @@ struct MainPopoverView: View {
                 Toggle("로그인 시 실행", isOn: Binding(
                     get: { presentation.launchAtLogin },
                     set: { presentation.setLaunchAtLogin($0) }
+                ))
+                Divider()
+                Button("업데이트 확인…") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheckForUpdates)
+                Toggle("자동으로 업데이트 확인", isOn: Binding(
+                    get: { updater.automaticallyChecksForUpdates },
+                    set: { updater.automaticallyChecksForUpdates = $0 }
                 ))
                 Divider()
                 Button("권한 설정 열기") { AudioCapturePermission.openSystemSettings() }

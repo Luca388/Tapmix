@@ -56,6 +56,9 @@ final class AudioProcessMonitor {
     private var processListeners: [AudioObjectID: PropertyListener] = [:]
     private var meterTimer: Timer?
     private var settings: [String: AppAudioSettings] = [:]
+    /// 볼륨/음소거를 조절한 앱의 settingsKey, 최근 것부터. 목록 맨 위에 이 순서로 쌓인다.
+    private var recentlyAdjusted: [String]
+    private static let recentlyAdjustedLimit = 50
     private var isRequestingPermission = false
     private var pendingTapCleanup: DispatchWorkItem?
 
@@ -66,6 +69,7 @@ final class AudioProcessMonitor {
         masterVolume = defaults.object(forKey: "masterVolume") as? Float ?? 1
         isMasterMuted = defaults.bool(forKey: "masterMuted")
         maxAppVolume = defaults.object(forKey: "maxAppVolume") as? Float ?? 1
+        recentlyAdjusted = defaults.stringArray(forKey: "recentlyAdjusted") ?? []
         loadSettings()
 
         let processListSelector = kAudioHardwarePropertyProcessObjectList
@@ -163,6 +167,20 @@ final class AudioProcessMonitor {
         guard let index = apps.firstIndex(where: { $0.id == pid }) else { return }
         apps[index].isMuted.toggle()
         applyGain(apps[index])
+        markAdjusted(pid)
+    }
+
+    /// 조절한 앱을 목록 맨 위로 올린다. 슬라이더는 드래그가 끝났을 때 부른다 —
+    /// 드래그 중에 행이 움직이면 포인터 아래에서 슬라이더가 빠져나가 버린다.
+    func markAdjusted(_ pid: pid_t) {
+        guard let app = apps.first(where: { $0.id == pid }) else { return }
+        recentlyAdjusted.removeAll { $0 == app.settingsKey }
+        recentlyAdjusted.insert(app.settingsKey, at: 0)
+        if recentlyAdjusted.count > Self.recentlyAdjustedLimit {
+            recentlyAdjusted.removeLast(recentlyAdjusted.count - Self.recentlyAdjustedLimit)
+        }
+        UserDefaults.standard.set(recentlyAdjusted, forKey: "recentlyAdjusted")
+        apps = sorted(apps)
     }
 
     private func applyGain(_ app: AudioApp) {
@@ -273,17 +291,28 @@ final class AudioProcessMonitor {
                 isMuted: previous?.isMuted ?? saved?.isMuted ?? false
             ))
         }
-        next.sort { lhs, rhs in
-            if lhs.isPlaying != rhs.isPlaying { return lhs.isPlaying }
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
-        apps = next
+        apps = sorted(next)
         log.notice("refresh: \(next.count, privacy: .public) apps, playing=\(next.filter(\.isPlaying).map(\.name).joined(separator: ","), privacy: .public) permission=\(String(describing: self.permission.status), privacy: .public)")
 
         for id in processListeners.keys where !seenProcessIDs.contains(id) {
             processListeners[id] = nil
         }
         syncTaps()
+    }
+
+    /// 최근에 조절한 앱이 맨 위 (최근 순), 나머지는 재생 중인 앱 먼저, 그다음 이름 순
+    private func sorted(_ list: [AudioApp]) -> [AudioApp] {
+        let rank = Dictionary(recentlyAdjusted.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
+        return list.sorted { lhs, rhs in
+            switch (rank[lhs.settingsKey], rank[rhs.settingsKey]) {
+            case let (l?, r?): return l < r
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): break
+            }
+            if lhs.isPlaying != rhs.isPlaying { return lhs.isPlaying }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
     }
 
     private func registerProcessListener(for id: AudioObjectID) {

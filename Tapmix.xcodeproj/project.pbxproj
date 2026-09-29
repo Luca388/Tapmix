@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		SC00000000000000000000C3 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = SC00000000000000000000C2 /* Sparkle */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		SC00000000000000000000A1 /* Tapmix.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tapmix.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				SC00000000000000000000C3 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = Tapmix;
 			packageProductDependencies = (
+				SC00000000000000000000C2 /* Sparkle */,
 			);
 			productName = Tapmix;
 			productReference = SC00000000000000000000A1 /* Tapmix.app */;
@@ -94,6 +100,9 @@
 			);
 			mainGroup = SC00000000000000000000A4;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				SC00000000000000000000C1 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = SC00000000000000000000A5 /* Products */;
 			projectDirPath = "";
@@ -174,7 +183,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -183,7 +192,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2;
+				MARKETING_VERSION = 0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.yu.Tapmix;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -199,7 +208,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -208,7 +217,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2;
+				MARKETING_VERSION = 0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.yu.Tapmix;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -239,6 +248,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		SC00000000000000000000C1 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.6.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		SC00000000000000000000C2 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = SC00000000000000000000C1 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = SC00000000000000000000AA /* Project object */;
 }

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Release 빌드 → Tapmix.app 서명 → 드래그 설치용 DMG 생성.
+# Release 빌드 → Tapmix.app 서명 → 드래그 설치용 dist/Tapmix.dmg 생성.
+# 파일 이름에 버전을 넣지 않는다 — releases/latest/download/Tapmix.dmg 가 항상 최신을 가리키게.
+# GitHub 에 올리는 건 scripts/release.sh.
 #
-#   scripts/make-dmg.sh                 # ad-hoc 서명 (로컬/지인 배포용)
+#   scripts/make-dmg.sh                 # ad-hoc 서명
 #
 # Developer ID 로 서명·공증하려면 환경변수를 준다:
 #   SIGN_IDENTITY="Developer ID Application: Name (TEAMID)"
@@ -37,7 +39,7 @@ codesign --verify --strict --verbose=2 "$APP"
 
 echo "==> DMG 생성"
 mkdir -p "$DIST_DIR"
-DMG="$DIST_DIR/$APP_NAME-$VERSION.dmg"
+DMG="$DIST_DIR/$APP_NAME.dmg"
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 cp -R "$APP" "$STAGE/"
