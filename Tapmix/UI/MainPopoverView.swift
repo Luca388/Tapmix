@@ -23,6 +23,7 @@ struct MainPopoverView: View {
             Divider()
 
             sectionHeader("앱")
+            MasterRowView(monitor: monitor)
             permissionBanner
 
             if monitor.apps.isEmpty {
@@ -87,7 +88,7 @@ struct MainPopoverView: View {
             EmptyView()
         case .unknown:
             // 권한은 볼륨을 처음 바꿀 때 요청한다. 그 전에는 배너를 띄울 이유가 없다.
-            if monitor.apps.contains(where: \.needsTap) {
+            if monitor.isMasterActive || monitor.apps.contains(where: \.hasCustomVolume) {
                 banner(
                     icon: "hourglass",
                     text: "앱별 볼륨을 적용하려면 시스템 오디오 녹음 권한이 필요합니다. 프롬프트에서 허용해 주세요.",
@@ -153,6 +154,24 @@ struct MainPopoverView: View {
                     get: { presentation.openWindowAtLaunch },
                     set: { presentation.openWindowAtLaunch = $0 }
                 ))
+                Divider()
+                Picker("앱 볼륨 최대치", selection: Binding(
+                    get: { monitor.maxAppVolume },
+                    set: { monitor.setMaxAppVolume($0) }
+                )) {
+                    ForEach(AudioProcessMonitor.maxAppVolumeChoices, id: \.self) { value in
+                        Text(value > 1 ? "\(Int(value * 100))% (부스트)" : "\(Int(value * 100))%").tag(value)
+                    }
+                }
+                Picker("시스템 볼륨 상한", selection: Binding(
+                    get: { output.volumeLimit },
+                    set: { output.setVolumeLimit($0) }
+                )) {
+                    Text("제한 없음").tag(Float?.none)
+                    ForEach(OutputDeviceController.volumeLimitChoices, id: \.self) { value in
+                        Text("\(Int(value * 100))%").tag(Float?.some(value))
+                    }
+                }
                 Divider()
                 Toggle("로그인 시 실행", isOn: Binding(
                     get: { presentation.launchAtLogin },

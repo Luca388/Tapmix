@@ -18,9 +18,8 @@ struct AudioApp: Identifiable {
     var isMuted = false
 
     var settingsKey: String { bundleID ?? name }
-    var effectiveGain: Float { isMuted ? 0 : volume }
-    /// 원음 그대로(100%, 음소거 아님)면 탭이 필요 없다. 탭이 없으면 macOS 녹음 표시도 안 뜬다.
-    var needsTap: Bool { isMuted || volume < 1 }
+    /// 사용자가 이 앱의 볼륨/음소거를 바꿨는지. 원음 그대로(100%, 음소거 아님)면 탭이 필요 없다.
+    var hasCustomVolume: Bool { isMuted || volume != 1 }
 }
 
 private struct AppAudioSettings: Codable {
@@ -41,6 +40,14 @@ final class AudioProcessMonitor {
     private(set) var errorMessage: String?
     let permission = AudioCapturePermission()
 
+    /// 모든 앱 볼륨에 곱해지는 마스터 볼륨 (0...1). 앱 사이의 비율은 그대로 유지된다.
+    private(set) var masterVolume: Float
+    private(set) var isMasterMuted: Bool
+    /// 앱 슬라이더 최대치. 1 보다 크면 부스트 (클리핑은 ProcessTap 에서 막는다).
+    private(set) var maxAppVolume: Float
+
+    static let maxAppVolumeChoices: [Float] = [1, 1.5, 2]
+
     private let system = AudioHardwareSystem.shared
     private let ownPID = ProcessInfo.processInfo.processIdentifier
 
@@ -55,6 +62,10 @@ final class AudioProcessMonitor {
     private static let settingsKey = "appAudioSettings"
 
     init() {
+        let defaults = UserDefaults.standard
+        masterVolume = defaults.object(forKey: "masterVolume") as? Float ?? 1
+        isMasterMuted = defaults.bool(forKey: "masterMuted")
+        maxAppVolume = defaults.object(forKey: "maxAppVolume") as? Float ?? 1
         loadSettings()
 
         let processListSelector = kAudioHardwarePropertyProcessObjectList
@@ -81,9 +92,67 @@ final class AudioProcessMonitor {
 
     func setVolume(_ value: Float, for pid: pid_t) {
         guard let index = apps.firstIndex(where: { $0.id == pid }) else { return }
-        // 슬라이더를 끝까지 올렸을 때 정확히 1.0 이 안 나올 수 있어 스냅 — 그래야 탭이 해제된다
-        apps[index].volume = value >= 0.995 ? 1 : max(value, 0)
+        apps[index].volume = Self.snapToUnity(min(max(value, 0), maxAppVolume), range: maxAppVolume)
         applyGain(apps[index])
+    }
+
+    func setMasterVolume(_ value: Float) {
+        masterVolume = Self.snapToUnity(min(max(value, 0), 1), range: 1)
+        UserDefaults.standard.set(masterVolume, forKey: "masterVolume")
+        applyMaster()
+    }
+
+    func toggleMasterMute() {
+        isMasterMuted.toggle()
+        UserDefaults.standard.set(isMasterMuted, forKey: "masterMuted")
+        applyMaster()
+    }
+
+    /// 최대치를 줄이면 그보다 큰 앱 볼륨은 새 최대치로 내린다
+    func setMaxAppVolume(_ value: Float) {
+        maxAppVolume = value
+        UserDefaults.standard.set(value, forKey: "maxAppVolume")
+        for index in apps.indices where apps[index].volume > value {
+            apps[index].volume = value
+            applyGain(apps[index])
+        }
+        for (key, saved) in settings where saved.volume > value {
+            settings[key]?.volume = value
+        }
+        saveSettings()
+    }
+
+    /// 마스터가 원음이 아니면(100% 미만 또는 음소거) 소리를 내는 모든 앱에 탭이 필요하다
+    var isMasterActive: Bool { isMasterMuted || masterVolume < 1 }
+
+    func gain(for app: AudioApp) -> Float {
+        (app.isMuted || isMasterMuted) ? 0 : app.volume * masterVolume
+    }
+
+    /// 탭이 필요한 앱: 볼륨을 직접 바꾼 앱, 또는 마스터가 켜져 있을 때 재생 중인 앱.
+    /// 마스터 때문에 한 번 건 탭은 재생이 멈춰도 유지한다 — 재생/정지마다 탭을 다시 만들지 않도록.
+    private func wantsTap(_ app: AudioApp) -> Bool {
+        app.hasCustomVolume || (isMasterActive && (app.isPlaying || taps[app.id] != nil))
+    }
+
+    /// 100% 근처는 정확히 1 로 붙인다. 슬라이더로 정확히 1.0 을 맞추기 어려운데, 1 이어야 탭이 해제된다.
+    private static func snapToUnity(_ value: Float, range: Float) -> Float {
+        abs(value - 1) < range * 0.01 ? 1 : value
+    }
+
+    private func applyMaster() {
+        if isMasterActive {
+            pendingTapCleanup?.cancel()
+            pendingTapCleanup = nil
+        }
+        for app in apps {
+            taps[app.id]?.control.gain.store(gain(for: app), ordering: .relaxed)
+        }
+        if isMasterActive {
+            syncTaps()
+        } else {
+            scheduleTapCleanup()
+        }
     }
 
     func isTapped(_ pid: pid_t) -> Bool {
@@ -98,10 +167,10 @@ final class AudioProcessMonitor {
 
     private func applyGain(_ app: AudioApp) {
         if let tap = taps[app.id] {
-            tap.control.gain.store(app.effectiveGain, ordering: .relaxed)
+            tap.control.gain.store(gain(for: app), ordering: .relaxed)
         }
 
-        if app.needsTap {
+        if wantsTap(app) {
             pendingTapCleanup?.cancel()
             pendingTapCleanup = nil
             if taps[app.id] == nil { syncTaps() }
@@ -111,7 +180,7 @@ final class AudioProcessMonitor {
             scheduleTapCleanup()
         }
 
-        if app.needsTap {
+        if app.hasCustomVolume {
             settings[app.settingsKey] = AppAudioSettings(volume: app.volume, isMuted: app.isMuted)
         } else {
             settings[app.settingsKey] = nil
@@ -200,7 +269,7 @@ final class AudioProcessMonitor {
                 processIDs: group.processIDs.sorted(),
                 isPlaying: group.isPlaying,
                 level: previous?.level ?? 0,
-                volume: previous?.volume ?? saved?.volume ?? 1,
+                volume: min(previous?.volume ?? saved?.volume ?? 1, maxAppVolume),
                 isMuted: previous?.isMuted ?? saved?.isMuted ?? false
             ))
         }
@@ -226,10 +295,10 @@ final class AudioProcessMonitor {
 
     // MARK: - Taps
 
-    /// 볼륨/음소거를 바꾼 앱에만 탭을 유지하고 나머지는 뗀다.
+    /// 볼륨/음소거를 바꾼 앱 (마스터가 켜져 있으면 재생 중인 앱도) 에만 탭을 유지하고 나머지는 뗀다.
     /// 프로세스 구성이 바뀐 앱은 탭을 다시 만든다.
     private func syncTaps() {
-        let needed = apps.filter(\.needsTap)
+        let needed = apps.filter(wantsTap)
         let neededPIDs = Set(needed.map(\.id))
 
         for pid in taps.keys where !neededPIDs.contains(pid) {
@@ -256,7 +325,7 @@ final class AudioProcessMonitor {
             if let existing = taps[app.id], existing.processIDs == app.processIDs { continue }
             taps[app.id]?.invalidate()
             do {
-                taps[app.id] = try ProcessTap(processIDs: app.processIDs, gain: app.effectiveGain)
+                taps[app.id] = try ProcessTap(processIDs: app.processIDs, gain: gain(for: app))
                 log.notice("tap OK for \(app.name, privacy: .public) procs=\(app.processIDs, privacy: .public)")
             } catch {
                 taps[app.id] = nil

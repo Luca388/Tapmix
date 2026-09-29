@@ -19,7 +19,16 @@ Xcode 에서 ⌘R. 메뉴바에 스피커 아이콘이 뜬다. 첫 실행 시 "�
 보기 방식 (SoundSource 처럼):
 - 메뉴바 팝오버 (기본)
 - 팝오버 우상단 창 아이콘 → 독립 창으로 떼어냄. 기본으로 항상 위에 뜬다.
-- 톱니바퀴 메뉴: Dock 아이콘 표시 / 창 항상 위 / 시작 시 창 열기 / 로그인 시 실행
+- 톱니바퀴 메뉴: Dock 아이콘 표시 / 창 항상 위 / 시작 시 창 열기 / 앱 볼륨 최대치 /
+  시스템 볼륨 상한 / 로그인 시 실행
+
+볼륨 범위:
+- **모든 앱** (앱 목록 맨 위): 마스터 슬라이더. 모든 앱 볼륨에 곱해져서 앱 사이 비율은 유지된다.
+  출력 장치 볼륨(위쪽 시스템 볼륨)과는 별개다. 100% 미만이면 재생 중인 모든 앱에 탭이 걸린다.
+- **앱 볼륨 최대치**: 100% / 150% / 200%. 100% 를 넘는 구간(부스트)은 슬라이더가 주황색이 되고,
+  IOProc 에서 샘플을 ±1 로 잘라 넘치지 않게 한다 (크게 올리면 소리가 찌그러질 수 있다).
+- **시스템 볼륨 상한**: 청력 보호용. 출력 장치 볼륨이 상한을 넘으면 (볼륨 키, 제어 센터 포함)
+  바로 상한으로 되돌린다. 슬라이더에 주황 눈금으로 표시된다.
 
 macOS 사운드 메뉴 대신 쓰기:
 - 팝오버 위쪽이 제어 센터의 "사운드" 메뉴와 같은 모양이다: 볼륨 슬라이더, 출력 장치 목록
@@ -87,11 +96,16 @@ Tapmix/
     PropertyListener.swift       AudioObject 프로퍼티 변경 알림 래퍼
   UI/
     MainPopoverView.swift        전체 팝오버/창 (출력 섹션 / 앱 목록 / 권한 배너 / 설정 메뉴)
+    MasterRowView.swift          "모든 앱" 마스터 볼륨/음소거
     OutputSectionView.swift      장치 피커 + 시스템 볼륨 슬라이더
     AppRowView.swift             앱 한 줄: 아이콘, 이름, 미터, 음소거, 슬라이더
     LevelMeterView.swift         가로 레벨미터 (dB 스케일 표시)
+  Assets.xcassets                앱 아이콘 (scripts/make-icon.swift 로 생성)
 Config/
   Info.plist                     LSUIElement, NSAudioCaptureUsageDescription
+scripts/
+  make-dmg.sh                    Release 빌드 → DMG
+  make-icon.swift                앱 아이콘 PNG 생성 (믹서 페이더)
 ```
 
 동작 원리:
@@ -124,7 +138,8 @@ macOS 의 "시스템 오디오 녹음" 표시가 뜨지 않고, 오디오 하드
 - 앱별 EQ: IOProc 안에 `vDSP_biquad` 를 끼우면 된다.
 - macOS 26+ 에서는 `CATapDescription.bundleIDs` + `processRestoreEnabled` 로
   아직 안 켜진 앱도 미리 등록할 수 있다.
-- 100% 이상 부스트가 필요하면 슬라이더 범위를 늘리고 클리핑 처리를 추가.
+- 부스트는 하드 클리핑이라 크게 올리면 찌그러진다. 룩어헤드 리미터를 넣으면 더 깨끗해진다.
+- 마스터가 100% 미만일 때 새로 재생을 시작한 앱은 탭이 걸리기 전 아주 잠깐 원래 볼륨으로 나온다.
 
 ## 실시간 스레드 규칙
 

@@ -101,8 +101,10 @@ struct OutputSectionView<Accessory: View>: View {
             .help(output.isMuted ? "음소거 해제" : "음소거")
 
             SystemVolumeSlider(
-                value: Binding(get: { output.volume }, set: { output.setVolume($0) })
+                value: Binding(get: { output.volume }, set: { output.setVolume($0) }),
+                limit: output.volumeLimit
             )
+            .help(output.volumeLimit.map { "상한 \(Int($0 * 100))%" } ?? "")
             .disabled(!output.hasVolumeControl)
             .opacity(output.hasVolumeControl ? 1 : 0.4)
 
@@ -201,6 +203,8 @@ struct MenuRowButton: View {
 /// 제어 센터 스타일의 굵은 캡슐 슬라이더 (value 0...1)
 struct SystemVolumeSlider: View {
     @Binding var value: Float
+    /// 상한이 있으면 그 위치에 눈금을 그린다
+    var limit: Float? = nil
 
     private let height: CGFloat = 22
 
@@ -215,6 +219,12 @@ struct SystemVolumeSlider: View {
                 Capsule()
                     .fill(Color.white.opacity(0.9))
                     .frame(width: x + height)
+                if let limit {
+                    Capsule()
+                        .fill(Color.orange)
+                        .frame(width: 2, height: height - 8)
+                        .offset(x: CGFloat(limit) * travel + height / 2 - 1)
+                }
                 Circle()
                     .fill(Color.white)
                     .shadow(color: .black.opacity(0.25), radius: 1.5, y: 0.5)

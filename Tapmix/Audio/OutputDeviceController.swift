@@ -38,6 +38,11 @@ final class OutputDeviceController {
     private(set) var isMuted = false
     private(set) var hasVolumeControl = false
     private(set) var hasMuteControl = false
+    /// 시스템 볼륨 상한 (청력 보호). nil 이면 제한 없음.
+    /// 볼륨 키나 제어 센터로 올려도 리스너가 상한으로 되돌린다.
+    private(set) var volumeLimit: Float?
+
+    static let volumeLimitChoices: [Float] = [0.9, 0.8, 0.7, 0.6, 0.5]
 
     private let system = AudioHardwareSystem.shared
     private var systemListeners: [PropertyListener] = []
@@ -49,6 +54,9 @@ final class OutputDeviceController {
     private let volumeSelector = kAudioHardwareServiceDeviceProperty_VirtualMainVolume
 
     init() {
+        let savedLimit = UserDefaults.standard.float(forKey: "systemVolumeLimit")
+        volumeLimit = savedLimit > 0 ? savedLimit : nil
+
         let selectors: [AudioObjectPropertySelector] = [
             kAudioHardwarePropertyDevices,
             kAudioHardwarePropertyDefaultOutputDevice,
@@ -141,6 +149,11 @@ final class OutputDeviceController {
         let volumeAddress = PropertyAddress(volumeSelector, scope: kAudioObjectPropertyScopeOutput)
         hasVolumeControl = AudioObjectHasProperty(id, [volumeAddress])
         volume = hasVolumeControl ? (Self.read(Float.self, id, volumeAddress) ?? 0) : 0
+        if hasVolumeControl, let limit = volumeLimit, volume > limit + 0.001 {
+            // 다른 곳에서 상한 위로 올렸다 — 되돌린다. 쓰기가 리스너를 다시 부르지만 그땐 상한 이하라 멈춘다.
+            Self.write(limit, id, volumeAddress)
+            volume = limit
+        }
 
         if let muteAddress = Self.muteAddress(for: id) {
             hasMuteControl = true
@@ -153,9 +166,15 @@ final class OutputDeviceController {
 
     func setVolume(_ value: Float) {
         guard let id = selectedID, hasVolumeControl else { return }
-        let clamped = min(max(value, 0), 1)
+        let clamped = min(max(value, 0), volumeLimit ?? 1)
         Self.write(clamped, id, PropertyAddress(volumeSelector, scope: kAudioObjectPropertyScopeOutput))
         volume = clamped
+    }
+
+    func setVolumeLimit(_ limit: Float?) {
+        volumeLimit = limit
+        UserDefaults.standard.set(limit ?? 0, forKey: "systemVolumeLimit")
+        refreshVolume()
     }
 
     func toggleMute() {

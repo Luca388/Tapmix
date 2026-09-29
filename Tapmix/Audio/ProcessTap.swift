@@ -5,7 +5,7 @@ import Synchronization
 /// 실시간 오디오 스레드와 메인 스레드가 공유하는 상태.
 /// IOProc 블록은 self 대신 이 객체만 캡처하므로 ProcessTap 의 deinit 이 정상 동작한다.
 final class TapControl: @unchecked Sendable {
-    /// 메인 스레드가 쓰고 실시간 스레드가 읽는 목표 게인 (0 = 음소거, 1 = 원음)
+    /// 메인 스레드가 쓰고 실시간 스레드가 읽는 목표 게인 (0 = 음소거, 1 = 원음, 1 초과 = 부스트)
     let gain: Atomic<Float>
     /// 마지막 IO 사이클의 출력 피크 (게인 적용 후)
     let peak = Atomic<Float>(0)
@@ -115,6 +115,7 @@ final class ProcessTap {
 
     /// 입력(탭) 채널 n → 출력 채널 n 으로 게인을 곱해 복사한다. 남는 출력 채널은 무음.
     /// 게인은 버퍼 안에서 lastGain → gain 으로 선형 램프를 걸어 클릭음을 막는다.
+    /// 부스트(게인 > 1) 중에는 ±1 로 잘라 출력 장치에서 샘플이 넘치지 않게 한다.
     private static func render(
         input: UnsafePointer<AudioBufferList>,
         output: UnsafeMutablePointer<AudioBufferList>,
@@ -125,6 +126,9 @@ final class ProcessTap {
         let targetGain = control.gain.load(ordering: .relaxed)
         let startGain = control.lastGain
         control.lastGain = targetGain
+        let isBoosting = max(startGain, targetGain) > 1
+        var clipLow: Float = -1
+        var clipHigh: Float = 1
         var peak: Float = 0
 
         var outputFlatChannel = 0
@@ -154,6 +158,9 @@ final class ProcessTap {
                     var gain = startGain
                     var step = (targetGain - startGain) / Float(frames)
                     vDSP_vrampmul(source, inputChannels, &gain, &step, destination, outputChannels, frames)
+                    if isBoosting {
+                        vDSP_vclip(destination, outputChannels, &clipLow, &clipHigh, destination, outputChannels, frames)
+                    }
 
                     var channelPeak: Float = 0
                     vDSP_maxmgv(destination, outputChannels, &channelPeak, frames)

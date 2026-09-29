@@ -28,7 +28,9 @@ struct AppRowView: View {
                     MuteButton(isMuted: app.isMuted) {
                         monitor.toggleMute(for: app.id)
                     }
-                    Slider(value: volumeBinding, in: 0...1)
+                    Slider(value: volumeBinding, in: 0...monitor.maxAppVolume)
+                        // 100% 초과(부스트) 구간은 주황색으로 알린다
+                        .tint(app.volume > 1 ? .orange : nil)
                     PercentLabel(value: app.volume)
                 }
             }
