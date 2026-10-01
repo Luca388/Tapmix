@@ -27,12 +27,23 @@ private struct AppAudioSettings: Codable {
     var isMuted: Bool
 }
 
+/// 출력 장치 하나에 대한 설정. 장치(UID)마다 따로 저장되어, 장치를 바꾸면 그 장치의 설정으로 전환된다.
+private struct DeviceProfile: Codable {
+    var apps: [String: AppAudioSettings] = [:]
+    var masterVolume: Float = 1
+    var isMasterMuted = false
+    var recentlyAdjusted: [String] = []
+}
+
 /// Core Audio 에 등록된 프로세스를 앱 단위로 묶어 추적하고,
 /// 볼륨을 바꾸거나 음소거한 앱에만 탭을 걸어 볼륨/음소거/레벨을 처리한다.
 ///
 /// 모든 앱에 탭을 상시로 걸면 macOS 의 "시스템 오디오 녹음" 표시가 항상 켜지고
 /// 오디오 하드웨어가 잠들지 못해 배터리도 먹는다. 그래서 필요한 앱에만 건다.
 /// 볼륨을 바꾼 앱은 재생 중이 아니어도 탭을 유지한다 — 재생 시작 순간 원래 볼륨으로 튀는 걸 막기 위해.
+///
+/// 앱 볼륨/음소거, 마스터, 최근 조절 순서는 출력 장치마다 따로 기억한다 (예: 스피커에선 Spotify 40%,
+/// AirPods 에선 100%). 처음 쓰는 장치는 전부 100% 에서 시작한다.
 @MainActor
 @Observable
 final class AudioProcessMonitor {
@@ -48,6 +59,9 @@ final class AudioProcessMonitor {
 
     static let maxAppVolumeChoices: [Float] = [1, 1.5, 2]
 
+    /// 지금 설정이 적용되는 출력 장치 이름 (UI 표시용)
+    private(set) var deviceName: String?
+
     private let system = AudioHardwareSystem.shared
     private let ownPID = ProcessInfo.processInfo.processIdentifier
 
@@ -55,22 +69,31 @@ final class AudioProcessMonitor {
     private var systemListeners: [PropertyListener] = []
     private var processListeners: [AudioObjectID: PropertyListener] = [:]
     private var meterTimer: Timer?
-    private var settings: [String: AppAudioSettings] = [:]
+    // 아래 settings / recentlyAdjusted / masterVolume / isMasterMuted 는 현재 장치(deviceUID)의 값이다.
+    // 저장할 때 profiles[deviceUID] 에 되돌려 쓰고, 장치가 바뀌면 새 장치의 프로필을 불러온다.
+    private var profiles: [String: DeviceProfile] = [:]
+    private var deviceUID: String
+    private var settings: [String: AppAudioSettings]
     /// 볼륨/음소거를 조절한 앱의 settingsKey, 최근 것부터. 목록 맨 위에 이 순서로 쌓인다.
     private var recentlyAdjusted: [String]
     private static let recentlyAdjustedLimit = 50
     private var isRequestingPermission = false
     private var pendingTapCleanup: DispatchWorkItem?
 
-    private static let settingsKey = "appAudioSettings"
+    private static let profilesKey = "deviceProfiles"
 
     init() {
-        let defaults = UserDefaults.standard
-        masterVolume = defaults.object(forKey: "masterVolume") as? Float ?? 1
-        isMasterMuted = defaults.bool(forKey: "masterMuted")
-        maxAppVolume = defaults.object(forKey: "maxAppVolume") as? Float ?? 1
-        recentlyAdjusted = defaults.stringArray(forKey: "recentlyAdjusted") ?? []
-        loadSettings()
+        maxAppVolume = UserDefaults.standard.object(forKey: "maxAppVolume") as? Float ?? 1
+        let (uid, name) = Self.currentOutputDevice()
+        deviceUID = uid
+        deviceName = name
+        let loaded = Self.loadProfiles(currentUID: uid)
+        profiles = loaded
+        let profile = loaded[uid] ?? DeviceProfile()
+        settings = profile.apps
+        masterVolume = profile.masterVolume
+        isMasterMuted = profile.isMasterMuted
+        recentlyAdjusted = profile.recentlyAdjusted
 
         let processListSelector = kAudioHardwarePropertyProcessObjectList
         let outputDeviceSelector = kAudioHardwarePropertyDefaultOutputDevice
@@ -78,9 +101,8 @@ final class AudioProcessMonitor {
             try? PropertyListener(objectID: system.id, selector: processListSelector) { [weak self] in
                 MainActor.assumeIsolated { self?.refresh() }
             },
-            // 출력 장치가 바뀌면 aggregate 가 옛 장치에 묶여 있으므로 전부 다시 만든다
             try? PropertyListener(objectID: system.id, selector: outputDeviceSelector) { [weak self] in
-                MainActor.assumeIsolated { self?.rebuildAllTaps() }
+                MainActor.assumeIsolated { self?.outputDeviceChanged() }
             },
         ].compactMap { $0 }
 
@@ -102,13 +124,13 @@ final class AudioProcessMonitor {
 
     func setMasterVolume(_ value: Float) {
         masterVolume = Self.snapToUnity(min(max(value, 0), 1), range: 1)
-        UserDefaults.standard.set(masterVolume, forKey: "masterVolume")
+        saveSettings()
         applyMaster()
     }
 
     func toggleMasterMute() {
         isMasterMuted.toggle()
-        UserDefaults.standard.set(isMasterMuted, forKey: "masterMuted")
+        saveSettings()
         applyMaster()
     }
 
@@ -122,6 +144,12 @@ final class AudioProcessMonitor {
         }
         for (key, saved) in settings where saved.volume > value {
             settings[key]?.volume = value
+        }
+        // 다른 장치의 프로필도 새 최대치에 맞춘다
+        for (uid, profile) in profiles where uid != deviceUID {
+            for (key, saved) in profile.apps where saved.volume > value {
+                profiles[uid]?.apps[key]?.volume = value
+            }
         }
         saveSettings()
     }
@@ -179,7 +207,7 @@ final class AudioProcessMonitor {
         if recentlyAdjusted.count > Self.recentlyAdjustedLimit {
             recentlyAdjusted.removeLast(recentlyAdjusted.count - Self.recentlyAdjustedLimit)
         }
-        UserDefaults.standard.set(recentlyAdjusted, forKey: "recentlyAdjusted")
+        saveSettings()
         apps = sorted(apps)
     }
 
@@ -406,16 +434,73 @@ final class AudioProcessMonitor {
 
     // MARK: - Settings
 
-    private func loadSettings() {
-        guard let data = UserDefaults.standard.data(forKey: Self.settingsKey),
-              let decoded = try? JSONDecoder().decode([String: AppAudioSettings].self, from: data)
-        else { return }
-        settings = decoded
+    /// 기본 출력 장치가 바뀌었을 때: 이전 장치 설정을 저장하고 새 장치의 설정으로 전환한 뒤 탭을 다시 만든다.
+    /// (탭의 aggregate 는 옛 장치에 묶여 있으므로 장치가 같더라도 다시 만든다)
+    private func outputDeviceChanged() {
+        let (uid, name) = Self.currentOutputDevice()
+        if uid != deviceUID, !uid.hasPrefix(ProcessTap.aggregateUIDPrefix) {
+            saveSettings()
+            deviceUID = uid
+            deviceName = name
+            let profile = profiles[uid] ?? DeviceProfile()
+            settings = profile.apps
+            masterVolume = profile.masterVolume
+            isMasterMuted = profile.isMasterMuted
+            recentlyAdjusted = profile.recentlyAdjusted
+            for index in apps.indices {
+                let saved = settings[apps[index].settingsKey]
+                apps[index].volume = min(saved?.volume ?? 1, maxAppVolume)
+                apps[index].isMuted = saved?.isMuted ?? false
+            }
+            apps = sorted(apps)
+            pendingTapCleanup?.cancel()
+            pendingTapCleanup = nil
+            log.notice("output device → \(name ?? uid, privacy: .public), \(self.settings.count, privacy: .public) app settings")
+        }
+        rebuildAllTaps()
+    }
+
+    private static func currentOutputDevice() -> (uid: String, name: String?) {
+        let device = try? AudioHardwareSystem.shared.defaultOutputDevice
+        return ((try? device?.uid) ?? "", try? device?.name)
     }
 
     private func saveSettings() {
-        guard let data = try? JSONEncoder().encode(settings) else { return }
-        UserDefaults.standard.set(data, forKey: Self.settingsKey)
+        profiles[deviceUID] = DeviceProfile(
+            apps: settings,
+            masterVolume: masterVolume,
+            isMasterMuted: isMasterMuted,
+            recentlyAdjusted: recentlyAdjusted
+        )
+        guard let data = try? JSONEncoder().encode(profiles) else { return }
+        UserDefaults.standard.set(data, forKey: Self.profilesKey)
+    }
+
+    /// 장치별 프로필을 읽는다. 장치별 저장 이전(0.3 까지)의 설정이 있으면 현재 장치의 프로필로 옮긴다.
+    private static func loadProfiles(currentUID: String) -> [String: DeviceProfile] {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: profilesKey),
+           let decoded = try? JSONDecoder().decode([String: DeviceProfile].self, from: data) {
+            return decoded
+        }
+
+        var legacy = DeviceProfile()
+        if let data = defaults.data(forKey: "appAudioSettings"),
+           let apps = try? JSONDecoder().decode([String: AppAudioSettings].self, from: data) {
+            legacy.apps = apps
+        }
+        legacy.masterVolume = defaults.object(forKey: "masterVolume") as? Float ?? 1
+        legacy.isMasterMuted = defaults.bool(forKey: "masterMuted")
+        legacy.recentlyAdjusted = defaults.stringArray(forKey: "recentlyAdjusted") ?? []
+        for key in ["appAudioSettings", "masterVolume", "masterMuted", "recentlyAdjusted"] {
+            defaults.removeObject(forKey: key)
+        }
+
+        let profiles = [currentUID: legacy]
+        if let data = try? JSONEncoder().encode(profiles) {
+            defaults.set(data, forKey: profilesKey)
+        }
+        return profiles
     }
 
     // MARK: - Helpers

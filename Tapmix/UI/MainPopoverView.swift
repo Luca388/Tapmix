@@ -23,7 +23,7 @@ struct MainPopoverView: View {
 
             Divider()
 
-            sectionHeader("앱")
+            appsHeader
             MasterRowView(monitor: monitor)
             permissionBanner
 
@@ -81,6 +81,23 @@ struct MainPopoverView: View {
             .padding(.horizontal, 12)
             .padding(.top, 10)
             .padding(.bottom, 4)
+    }
+
+    /// "앱 · AirPods Pro" — 아래 볼륨들이 어느 출력 장치의 설정인지 보여준다 (장치마다 따로 저장됨)
+    private var appsHeader: some View {
+        HStack(spacing: 6) {
+            sectionHeader("앱")
+            if let name = monitor.deviceName {
+                Text(name)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+                    .padding(.leading, -12)
+                    .help("앱 볼륨은 출력 장치마다 따로 기억됩니다")
+            }
+        }
     }
 
     @ViewBuilder
