@@ -97,6 +97,17 @@ struct MainPopoverView: View {
                     .padding(.leading, -12)
                     .help("앱 볼륨은 출력 장치마다 따로 기억됩니다")
             }
+            Spacer(minLength: 8)
+            if monitor.hasAnyCustomVolume {
+                Button("모두 초기화") { monitor.resetAllVolumes() }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+                    .padding(.trailing, 12)
+                    .help("이 출력 장치의 마스터와 모든 앱 볼륨을 100% 로 되돌립니다")
+            }
         }
     }
 

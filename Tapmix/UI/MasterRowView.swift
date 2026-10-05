@@ -28,6 +28,9 @@ struct MasterRowView: View {
                     PercentLabel(value: monitor.masterVolume)
                         .onTapGesture(count: 2) { monitor.resetMaster() }
                         .help("더블클릭하면 기본값(100%)으로 초기화")
+                    ResetButton(isVisible: monitor.isMasterActive) {
+                        monitor.resetMaster()
+                    }
                 }
             }
         }

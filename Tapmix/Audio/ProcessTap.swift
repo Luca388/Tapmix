@@ -9,12 +9,15 @@ final class TapControl: @unchecked Sendable {
     let gain: Atomic<Float>
     /// 마지막 IO 사이클의 출력 피크 (게인 적용 후)
     let peak = Atomic<Float>(0)
-    /// 직전 사이클이 끝난 시점의 게인. 실시간 스레드만 만진다 (램프 시작점).
-    var lastGain: Float
+    /// 우리 출력이 원래 경로를 대신하고 있는지. false 면 게인 0 으로 램프한다 (탭을 붙이고 떼는 순간의 전환용).
+    let isLive = Atomic<Bool>(false)
+    /// IOProc 이 한 번이라도 불렸는지 — 출력이 실제로 돌기 시작한 뒤에 원래 경로를 음소거하기 위해
+    let hasStarted = Atomic<Bool>(false)
+    /// 직전 사이클이 끝난 시점의 게인. 실시간 스레드만 만진다 (램프 시작점). 0 에서 페이드인한다.
+    var lastGain: Float = 0
 
     init(gain: Float) {
         self.gain = Atomic(gain)
-        self.lastGain = gain
     }
 }
 
@@ -22,6 +25,10 @@ final class TapControl: @unchecked Sendable {
 /// 원래 경로는 `.muted` 로 끊고 게인을 곱해서 기본 출력 장치로 다시 내보낸다.
 ///
 /// 즉 앱 → (tap, muted) → 우리 IOProc (× gain) → 스피커. 볼륨/음소거는 gain 하나로 처리한다.
+///
+/// 붙이고 뗄 때 소리가 끊기지 않도록, 탭은 음소거 없이 만들어 우리 출력이 돌기 시작한 뒤에야
+/// 원래 경로를 음소거하고, 뗄 때는 원래 경로를 먼저 살린 뒤 정리한다. 처음부터 `.muted` 로 만들거나
+/// 정리부터 하면 aggregate 생성/파괴(coreaudiod 왕복, 수십~수백 ms) 동안 소리가 끊긴다.
 final class ProcessTap {
     /// 우리가 만드는 aggregate device 의 UID 접두사. 장치 목록에서 자기 자신을 걸러낼 때 쓴다.
     static let aggregateUIDPrefix = "com.yu.Tapmix.tap."
@@ -31,6 +38,7 @@ final class ProcessTap {
 
     private let system = AudioHardwareSystem.shared
     private var tap: AudioHardwareTap?
+    private var tapDescription: CATapDescription?
     private var aggregate: AudioHardwareAggregateDevice?
     private var ioProcID: AudioDeviceIOProcID?
     private let ioQueue = DispatchQueue(label: "Tapmix.tap.io", qos: .userInteractive)
@@ -55,13 +63,14 @@ final class ProcessTap {
         let description = CATapDescription(stereoMixdownOfProcesses: processIDs)
         description.uuid = UUID()
         description.name = "Tapmix \(processIDs.map(String.init).joined(separator: ","))"
-        description.muteBehavior = .muted
+        description.muteBehavior = .unmuted
         description.isPrivate = true
 
         guard let tap = try system.makeProcessTap(description: description) else {
             throw TapError.tapCreationFailed
         }
         self.tap = tap
+        self.tapDescription = description
         if let format = try? tap.format {
             log.notice("tap format: \(format.mSampleRate, privacy: .public)Hz ch=\(format.mChannelsPerFrame, privacy: .public) flags=\(format.mFormatFlags, privacy: .public) bytesPerFrame=\(format.mBytesPerFrame, privacy: .public)")
         }
@@ -111,6 +120,35 @@ final class ProcessTap {
 
         try aggregate.start(IOProcID: procID)
         log.notice("aggregate \(aggregate.id, privacy: .public) started, output=\(outputUID, privacy: .public)")
+
+        // 4. 우리 출력이 실제로 돌기 시작하면 원래 경로를 음소거하고 페이드인한다.
+        //    보통 한두 버퍼(수 ms) 안에 시작된다. 끝내 안 불리면 그냥 넘어간다 (원음이 계속 들림).
+        let deadline = Date().addingTimeInterval(0.2)
+        while !control.hasStarted.load(ordering: .relaxed), Date() < deadline {
+            usleep(2_000)
+        }
+        try setMuted(true)
+        control.isLive.store(true, ordering: .relaxed)
+    }
+
+    private func setMuted(_ muted: Bool) throws {
+        guard let tap, let tapDescription else { return }
+        tapDescription.muteBehavior = muted ? .muted : .unmuted
+        try tap.setDescription(tapDescription)
+    }
+
+    /// 소리를 끊지 않고 탭을 뗀다. 원래 경로의 음소거를 먼저 풀고 우리 출력은 0 으로 램프한 뒤,
+    /// 램프가 돌 시간을 주고 정리한다. 그동안 이 객체는 클로저가 붙잡아 둔다.
+    func release() {
+        guard tap != nil, aggregate != nil else {
+            invalidate()
+            return
+        }
+        try? setMuted(false)
+        control.isLive.store(false, ordering: .relaxed)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.invalidate()
+        }
     }
 
     /// 입력(탭) 채널 n → 출력 채널 n 으로 게인을 곱해 복사한다. 남는 출력 채널은 무음.
@@ -123,7 +161,8 @@ final class ProcessTap {
     ) {
         let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         let outputBuffers = UnsafeMutableAudioBufferListPointer(output)
-        let targetGain = control.gain.load(ordering: .relaxed)
+        control.hasStarted.store(true, ordering: .relaxed)
+        let targetGain = control.isLive.load(ordering: .relaxed) ? control.gain.load(ordering: .relaxed) : 0
         let startGain = control.lastGain
         control.lastGain = targetGain
         let isBoosting = max(startGain, targetGain) > 1
@@ -194,6 +233,7 @@ final class ProcessTap {
         ioProcID = nil
         aggregate = nil
         tap = nil
+        tapDescription = nil
     }
 
     enum TapError: LocalizedError {

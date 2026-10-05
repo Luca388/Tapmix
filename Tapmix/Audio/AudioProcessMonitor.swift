@@ -417,7 +417,7 @@ final class AudioProcessMonitor {
         var failure: String?
         for app in needed {
             if let existing = taps[app.id], existing.processIDs == app.processIDs { continue }
-            taps[app.id]?.invalidate()
+            taps[app.id]?.release()
             do {
                 taps[app.id] = try ProcessTap(processIDs: app.processIDs, gain: gain(for: app))
                 log.notice("tap OK for \(app.name, privacy: .public) procs=\(app.processIDs, privacy: .public)")
@@ -436,13 +436,13 @@ final class AudioProcessMonitor {
     }
 
     private func removeTap(for pid: pid_t) {
-        taps[pid]?.invalidate()
+        taps[pid]?.release()
         taps[pid] = nil
         log.notice("tap removed for pid \(pid, privacy: .public)")
     }
 
     private func removeAllTaps() {
-        for tap in taps.values { tap.invalidate() }
+        for tap in taps.values { tap.release() }
         taps = [:]
     }
 

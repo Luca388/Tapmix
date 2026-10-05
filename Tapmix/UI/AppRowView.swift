@@ -36,6 +36,9 @@ struct AppRowView: View {
                     PercentLabel(value: app.volume)
                         .onTapGesture(count: 2) { monitor.resetVolume(for: app.id) }
                         .help("더블클릭하면 기본값(100%)으로 초기화")
+                    ResetButton(isVisible: app.hasCustomVolume) {
+                        monitor.resetVolume(for: app.id)
+                    }
                 }
             }
         }

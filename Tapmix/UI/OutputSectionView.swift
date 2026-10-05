@@ -273,3 +273,24 @@ struct PercentLabel: View {
             .frame(width: 36, alignment: .trailing)
     }
 }
+
+/// 볼륨을 기본값(100%, 음소거 해제)으로 되돌리는 버튼. 기본값일 땐 숨기되 자리는 유지한다 —
+/// 나타났다 사라지며 슬라이더 폭이 바뀌면 드래그 중인 손잡이가 포인터에서 어긋난다.
+struct ResetButton: View {
+    let isVisible: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.counterclockwise")
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 16, height: 18)
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(isVisible ? 1 : 0)
+        .disabled(!isVisible)
+        .help("기본값(100%)으로 초기화")
+    }
+}
