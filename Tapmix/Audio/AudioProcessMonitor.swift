@@ -198,6 +198,43 @@ final class AudioProcessMonitor {
         markAdjusted(pid)
     }
 
+    /// 앱 하나를 기본값(100%, 음소거 해제)으로 되돌린다. 원음이 되므로 탭은 잠시 뒤 해제되고,
+    /// 최근 조절 목록에서도 빠져 원래 정렬 위치로 돌아간다.
+    func resetVolume(for pid: pid_t) {
+        guard let index = apps.firstIndex(where: { $0.id == pid }) else { return }
+        apps[index].volume = 1
+        apps[index].isMuted = false
+        recentlyAdjusted.removeAll { $0 == apps[index].settingsKey }
+        applyGain(apps[index])
+        apps = sorted(apps)
+    }
+
+    /// 마스터만 기본값(100%, 음소거 해제)으로 되돌린다. 앱별 볼륨은 그대로.
+    func resetMaster() {
+        masterVolume = 1
+        isMasterMuted = false
+        saveSettings()
+        applyMaster()
+    }
+
+    /// 현재 출력 장치의 마스터와 모든 앱 볼륨을 기본값으로 되돌린다.
+    /// 지금 목록에 없는 앱의 저장값도 지운다. 다른 장치의 프로필은 건드리지 않는다.
+    func resetAllVolumes() {
+        for index in apps.indices {
+            apps[index].volume = 1
+            apps[index].isMuted = false
+        }
+        settings = [:]
+        recentlyAdjusted = []
+        apps = sorted(apps)
+        resetMaster()
+    }
+
+    /// 마스터나 앱 중 하나라도 기본값이 아닌지 (전체 초기화 메뉴 활성화용)
+    var hasAnyCustomVolume: Bool {
+        isMasterActive || !settings.isEmpty
+    }
+
     /// 조절한 앱을 목록 맨 위로 올린다. 슬라이더는 드래그가 끝났을 때 부른다 —
     /// 드래그 중에 행이 움직이면 포인터 아래에서 슬라이더가 빠져나가 버린다.
     func markAdjusted(_ pid: pid_t) {

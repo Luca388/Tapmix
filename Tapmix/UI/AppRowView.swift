@@ -34,12 +34,19 @@ struct AppRowView: View {
                         // 100% 초과(부스트) 구간은 주황색으로 알린다
                         .tint(app.volume > 1 ? .orange : nil)
                     PercentLabel(value: app.volume)
+                        .onTapGesture(count: 2) { monitor.resetVolume(for: app.id) }
+                        .help("더블클릭하면 기본값(100%)으로 초기화")
                 }
             }
         }
         .padding(.horizontal, 12)
         .frame(height: Self.height)
         .opacity(app.isMuted ? 0.6 : 1)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("볼륨 기본값으로 초기화") { monitor.resetVolume(for: app.id) }
+                .disabled(!app.hasCustomVolume)
+        }
     }
 
     /// 탭이 걸린 앱만 실제 레벨을 알 수 있다. 원음(100%)으로 두어 탭이 없는 앱은 재생 여부만 표시.
