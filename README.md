@@ -1,6 +1,6 @@
 # Tapmix
 
-macOS 앱별 음량 조절기 (SoundSource 스타일). Core Audio **Process Tap** API 기반이라
+macOS 앱별 음량 조절기 . Core Audio **Process Tap** API 기반이라
 커널 익스텐션이나 가상 오디오 드라이버 없이 동작한다.
 
 - 요구사항: macOS 15+ (Swift 네이티브 `AudioHardwareSystem` API), Xcode 16+
