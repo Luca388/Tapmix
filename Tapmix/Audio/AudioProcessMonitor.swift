@@ -14,12 +14,27 @@ struct AudioApp: Identifiable {
     var isPlaying: Bool
     /// 0...1 표시용 레벨 (감쇠 적용)
     var level: Float = 0
+    /// 슬라이더 위치 (0...maxAppVolume). 실제 게인은 VolumeCurve.gain(for:) 로 바꿔서 쓴다.
     var volume: Float = 1
     var isMuted = false
 
     var settingsKey: String { bundleID ?? name }
     /// 사용자가 이 앱의 볼륨/음소거를 바꿨는지. 원음 그대로(100%, 음소거 아님)면 탭이 필요 없다.
     var hasCustomVolume: Bool { isMuted || volume != 1 }
+}
+
+/// 슬라이더 위치 → 게인(진폭 배율). 귀는 소리 크기를 dB(로그)로 느끼므로 위치를 그대로 곱하면
+/// 위쪽 절반에서는 거의 안 줄어들고 변화가 맨 아래에 몰린다.
+/// - 0...1: 위치³ (50% ≈ −18 dB, 25% ≈ −36 dB). 오디오 페이더에서 흔히 쓰는 근사.
+/// - 1 초과(부스트): 위치 1 늘 때마다 +6 dB (200% = 게인 2), dB 기준으로 고르게.
+enum VolumeCurve {
+    static func gain(for position: Float) -> Float {
+        position <= 1 ? position * position * position : exp2(position - 1)
+    }
+
+    static func position(for gain: Float) -> Float {
+        gain <= 1 ? cbrt(gain) : 1 + log2(gain)
+    }
 }
 
 private struct AppAudioSettings: Codable {
@@ -158,7 +173,7 @@ final class AudioProcessMonitor {
     var isMasterActive: Bool { isMasterMuted || masterVolume < 1 }
 
     func gain(for app: AudioApp) -> Float {
-        (app.isMuted || isMasterMuted) ? 0 : app.volume * masterVolume
+        (app.isMuted || isMasterMuted) ? 0 : VolumeCurve.gain(for: app.volume) * VolumeCurve.gain(for: masterVolume)
     }
 
     /// 탭이 필요한 앱: 볼륨을 직접 바꾼 앱, 또는 마스터가 켜져 있을 때 재생 중인 앱.
@@ -513,8 +528,36 @@ final class AudioProcessMonitor {
         UserDefaults.standard.set(data, forKey: Self.profilesKey)
     }
 
-    /// 장치별 프로필을 읽는다. 장치별 저장 이전(0.3 까지)의 설정이 있으면 현재 장치의 프로필로 옮긴다.
+    /// 볼륨 커브 도입 전에는 게인을 그대로 저장했다. 한 번만 슬라이더 위치로 바꿔서 들리는 크기를 유지한다.
+    private static let curveMigrationKey = "volumeCurveMigrated"
+
     private static func loadProfiles(currentUID: String) -> [String: DeviceProfile] {
+        var profiles = loadStoredProfiles(currentUID: currentUID)
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: curveMigrationKey) else { return profiles }
+
+        // 부스트 구간은 위치가 게인보다 커질 수 있다 (게인 1.5 → 위치 1.58). 최대치로 자른다.
+        let maxPosition = defaults.object(forKey: "maxAppVolume") as? Float ?? 1
+        profiles = profiles.mapValues { profile in
+            var converted = profile
+            converted.masterVolume = VolumeCurve.position(for: profile.masterVolume)
+            converted.apps = profile.apps.mapValues { saved in
+                AppAudioSettings(
+                    volume: min(VolumeCurve.position(for: saved.volume), maxPosition),
+                    isMuted: saved.isMuted
+                )
+            }
+            return converted
+        }
+        if let data = try? JSONEncoder().encode(profiles) {
+            defaults.set(data, forKey: profilesKey)
+        }
+        defaults.set(true, forKey: curveMigrationKey)
+        return profiles
+    }
+
+    /// 장치별 프로필을 읽는다. 장치별 저장 이전(0.3 까지)의 설정이 있으면 현재 장치의 프로필로 옮긴다.
+    private static func loadStoredProfiles(currentUID: String) -> [String: DeviceProfile] {
         let defaults = UserDefaults.standard
         if let data = defaults.data(forKey: profilesKey),
            let decoded = try? JSONDecoder().decode([String: DeviceProfile].self, from: data) {
